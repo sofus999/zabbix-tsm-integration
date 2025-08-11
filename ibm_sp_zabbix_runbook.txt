@@ -1,0 +1,194 @@
+IBM Storage Protect Monitoring � Zabbix Proxy Runbook
+Prepared for Linux Operations � July 28, 2025
+
+1. Purpose & Scope
+This runbook describes the Linux-side components running on the Zabbix proxy for monitoring IBM Storage Protect (ISP, formerly TSM) instances. It covers file locations, scheduling, required environment, verification steps, and troubleshooting. The goal is to enable Linux operations to maintain and repair the integration when issues occur.
+2. Quick Reference
+Paths & Components
+Key
+Value
+Zabbix ExternalScripts path
+/usr/lib/zabbix/externalscripts
+Cleanup helper
+/root/bin/clean_storage_protect_temp
+Zabbix proxy config
+/etc/zabbix/zabbix_proxy.conf
+Log files
+/var/log/zabbix/sp_volume_check.log, /var/log/zabbix/sp_container_check.log
+Logrotate config
+/etc/logrotate.d/storage-protect
+IBM SP client binaries
+/opt/tivoli/tsm/client/ba/bin/ (dsmadmc, dsmc)
+Zabbix Proxy Settings (current)
+Key
+Value
+ExternalScripts
+/usr/lib/zabbix/externalscripts
+Timeout
+20
+Addressing Convention (RB instances)
+Key
+Value
+Hostname pattern
+<TSM_INSTANCE_PATTERN>NN (e.g., <TSM_INSTANCE>)
+IP mapping
+<TSM_BASE_IP_PREFIX>.1NN (<TSM_INSTANCE> → <TSM_INSTANCE_IP>)
+TCP data port
+15NN (<TSM_INSTANCE> → <TSM_DATA_PORT>)
+TCP admin port
+16NN (<TSM_INSTANCE> → <TSM_ADMIN_PORT>)
+3. Components on the Proxy
+3.1 External Scripts (invoked by Zabbix items)
+/usr/lib/zabbix/externalscripts/
+* storage_protect_get_instances.sh
+– LLD discovery of ISP instances (<TSM_INSTANCE_PATTERN>00–<TSM_INSTANCE_PATTERN>99) using dsmadmc; emits LLD JSON.
+* storage_protect_dsmadmc.sh
+� Wrapper around dsmadmc; enforces per-call timeout, handles formats, and normalizes output.
+* storage_protect_pool_collector.sh
+� Collects pool metrics and returns a single JSON blob; powers pool-dependent items and pool LLD.
+* storage_protect_backup.sh
+� Specialized checks (restore validation, DB/log status) via dsmadmc/dsmc.
+3.2 Trapper Data Producers (cron-driven)
+* storage_protect_volume_cron.sh
+� Iterates RB range, queries volume states, sends aggregated JSON to key storage_protect.volume.status via zabbix_sender.
+* storage_protect_container_cron.sh
+� Iterates RB range, counts unavailable containers (or structured payload) and pushes to storage_protect.container.status.
+3.3 Cleanup Helper (cron-driven by root)
+/root/bin/clean_storage_protect_temp
+Due to occasional orphaned dsmadmc processes when the Zabbix?wrapper?dsmadmc chain times out, a cleanup task removes stale temp files and kills dangling sessions.
+3.4 IBM Storage Protect Client Environment
+Binaries: /opt/tivoli/tsm/client/ba/bin/ (dsmadmc, dsmc)
+Configuration: dsm.sys and dsm.opt define all server stanzas. Example RB entries:
+servername              rb37
+errorlogname            /var/log/Atea/dsmerror_rb37.log
+schedlogname            /var/log/Atea/dsmsched_rb37.log
+errorlogretention       30
+NODENAME                DMSAVE_ZABBIX_CLIENT_CHECK
+PASSWORDACCESS          GENERATE
+commmethod              tcpip
+tcpport                 1537
+tcpadminport            1637
+tcpserveraddress        10.255.1.137
+ENABLEINSTRUMENTATION   no
+
+servername              rb38
+errorlogname            /var/log/Atea/dsmerror_rb38.log
+schedlogname            /var/log/Atea/dsmsched_rb38.log
+errorlogretention       30
+NODENAME                DMSAVE_ZABBIX_CLIENT_CHECK
+PASSWORDACCESS          GENERATE
+commmethod              tcpip
+tcpport                 1538
+tcpadminport            1638
+tcpserveraddress        10.255.1.138
+ENABLEINSTRUMENTATION   no
+Mapping rule: rbNN ? IP 10.255.1.1NN, tcpport 15NN, tcpadminport 16NN.
+4. Data Flow
+1) Discovery (LLD): Zabbix runs storage_protect_get_instances.sh to enumerate SP servers via dsmadmc; host prototypes are created per {#SERVERNAME} (e.g., rb37).
+2) External Checks: For each discovered host, Zabbix calls storage_protect_dsmadmc.sh with SQL; wrapper applies timeouts and formatting.
+3) Pool Metrics: storage_protect_pool_collector.sh returns JSON (metrics + LLD) consumed by dependent items.
+4) Trapper Items: Cron scripts compute and push values for volume/container states using zabbix_sender.
+5) Cleanup: root cron clears stale sessions and temp files.
+5. Scheduling (cron)
+5.1 Confirmed (root crontab)
+0 * * * * /root/bin/clean_storage_protect_temp > /dev/null 2>&1
+5.2 Pending Confirmation (recommended defaults)
+The following entries should run under the 'zabbix' user. Adjust intervals as needed; 5�10 minutes is typical to keep trapper-driven items fresh.
+*/10 * * * * /usr/lib/zabbix/externalscripts/storage_protect_volume_cron.sh >> /var/log/zabbix/sp_volume_check.log 2>&1
+*/10 * * * * /usr/lib/zabbix/externalscripts/storage_protect_container_cron.sh >> /var/log/zabbix/sp_container_check.log 2>&1
+Ensure zabbix_sender uses the correct config or server/proxy destination (e.g., -c /etc/zabbix/zabbix_agent2.conf).
+6. Zabbix Proxy Configuration
+# /etc/zabbix/zabbix_proxy.conf
+ExternalScripts=/usr/lib/zabbix/externalscripts
+Timeout=20
+After changes: systemctl restart zabbix-proxy
+7. Logging & Rotation
+Logs written by cron-driven scripts:
+/var/log/zabbix/sp_volume_check.log
+/var/log/zabbix/sp_container_check.log
+
+Logrotate is configured as follows:
+/etc/logrotate.d/storage-protect
+---------------------------------
+/var/log/zabbix/sp_volume_check.log /var/log/zabbix/sp_container_check.log {
+    weekly
+    rotate 1
+    missingok
+    notifempty
+    create 0664 zabbix zabbix
+}
+8. Permissions & Ownership
+� External scripts: owner zabbix:zabbix, mode 750
+� Cleanup helper (root): mode 750
+� IBM SP binaries and config readable/executable by zabbix
+� SELinux: allow execution/network as required (port 1500-1599 and 1600-1699)
+9. Network & Firewall Requirements
+� Outbound from proxy to each RB host:
+  � TCP 15NN (data), TCP 16NN (admin) as per dsm.sys
+� Ensure upstream ACLs permit 10.255.1.100�10.255.1.199
+10. Credentials Handling
+External checks consume {$TSM_USER} and {$TSM_PASS} via Zabbix macros
+11. Verification � One Host (rb37)
+Run as zabbix where applicable.
+/opt/tivoli/tsm/client/ba/bin/dsmadmc -se=rb37 -id="$TSM_USER" -password="$TSM_PASS" -dataonly=yes -commadelim "select count(*) from status"
+
+sudo -u zabbix /usr/lib/zabbix/externalscripts/storage_protect_dsmadmc.sh   -i rb37 -u "$TSM_USER" -p "$TSM_PASS" -q "select count(*) from status" -t 45
+
+sudo -u zabbix /usr/lib/zabbix/externalscripts/storage_protect_pool_collector.sh   -i rb37 -u "$TSM_USER" -p "$TSM_PASS"
+
+# Example trapper tests:
+zabbix_sender -c /etc/zabbix/zabbix_agent2.conf -s rb37 -k storage_protect.volume.status -o '{"volumes":{"DESTROYED":0,"UNAVAILABLE":0,"READONLY":2,"OFFSITE":5,"unknown":0}}'
+zabbix_sender -c /etc/zabbix/zabbix_agent2.conf -s rb37 -k storage_protect.container.status -o 0
+12. Troubleshooting
+12.1 Discovery Issues (hosts not appearing)
+� Run storage_protect_get_instances.sh manually and confirm valid LLD JSON.
+� Verify {$TSM_HOST} seed macro and network reachability to RB IPs/ports.
+12.2 External Check Timeouts/Failures
+� Proxy Timeout=20
+� Increase per-call timeout with -t in storage_protect_dsmadmc.sh if needed.
+� Review /var/log/Atea/dsmerror_rbNN.log for authentication or server-side errors.
+12.3 Orphaned dsmadmc Processes / High CPU
+� Inspect for old dsmadmc PIDs; run cleanup helper manually if required.
+� Consider wrapper hardening to kill process groups on timeout (see Recommendations).
+12.4 Trapper Values Missing
+� Confirm zabbix_sender output shows processed: 1 and host -s matches the Zabbix host exactly.
+� Tail /var/log/zabbix/sp_*.log for errors.
+� Ensure the -c config or -z destination targets the correct server/proxy.
+12.5 Authentication Failures
+� Check dsmerror_rbNN.log under /var/log/Atea/
+� Verify credentials/macros and that NODENAME DMSAVE_ZABBIX_CLIENT_CHECK is permitted.
+12.6 Pool Discovery Empty
+� Run pool collector manually and inspect the JSON 'error' field.
+� Increase timeouts and re-run if ISP is slow.
+13. Change Management & Deployment Steps
+# Install/Update scripts
+install -o zabbix -g zabbix -m 0750 storage_protect_*.sh /usr/lib/zabbix/externalscripts/
+install -o root -g root -m 0750 clean_storage_protect_temp /root/bin/
+
+# Firewall (example � adjust for your environment)
+# allow outbound to 10.255.1.100-199 on 1500s/1600s
+
+# Zabbix proxy tuning
+sed -i 's/^Timeout=.*/Timeout=90/' /etc/zabbix/zabbix_proxy.conf
+systemctl restart zabbix-proxy
+
+# Cron (zabbix user)
+crontab -u zabbix -l
+# add entries for volume/container scripts and verify logs
+
+# Post-change verification
+zabbix_sender test + Latest data in UI
+14. On-call Checklist (TL;DR)
+1) systemctl status zabbix-proxy (running, recent restart OK)
+2) ps aux | grep dsmadmc (no large number of old processes, typical if high mem or cpu usage)
+3) tail -n 100 /var/log/zabbix/sp_* (no auth/timeouts)
+4) Manual wrapper test for a single host (see Verification)
+5) Check network to 10.255.1.1NN:15NN from proxy
+6) If timeouts: increase proxy Timeout and run cleanup helper once
+
+
+
+
+
+
+

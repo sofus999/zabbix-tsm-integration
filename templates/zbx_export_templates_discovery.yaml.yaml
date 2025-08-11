@@ -1,0 +1,71 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: a50d45f9963f4cbbbd01690149b0ebda
+      name: 'Storage Protect Instances'
+  host_groups:
+    - uuid: 9d1de07066a8462a99dec340f1a2806a
+      name: DKDMS
+    - uuid: a50d45f9963f4cbbbd01690149b0ebda
+      name: 'Storage Protect Instances'
+  templates:
+    - uuid: 84d01f03a37a4f93b6c443556e635b2b
+      template: 'Discover IBM Storage Protect Instances'
+      name: 'Discover IBM Storage Protect Instances'
+      description: 'Discovers TSM servers in configured IP range'
+      groups:
+        - name: 'Storage Protect Instances'
+      discovery_rules:
+        - uuid: 156ad5782e8e43bebdd22444eff77892
+          name: 'IBM SP: Discover Instances'
+          type: EXTERNAL
+          key: 'storage_protect_get_instances.sh[-i, {$TSM_HOST}, -u, {$TSM_USER}, -p, {$TSM_PASS}]'
+          delay: 24h
+          filter:
+            conditions:
+              - macro: '{#SERVERNAME}'
+                value: ^<TSM_INSTANCE_PATTERN>99$
+                operator: NOT_MATCHES_REGEX
+                formulaid: A
+          lifetime: 30d
+          enabled_lifetime_type: DISABLE_NEVER
+          description: |
+            Discover IBM Storage Protect instances using dsmadmc CLI. Will find.
+            
+            - Instance names starting with RB (not ending with _adm)
+            - Instances in configured IP range
+            
+            Uses {$TSM_HOST} macro to query SERVERS table. Configure with your primary instance.
+            
+            Query used:
+            "select SERVER_NAME, HL_ADDRESS, LL_ADDRESS from servers where (SERVER_NAME like 'RB__') or SERVER_NAME='RB0'")
+          host_prototypes:
+            - uuid: 532aab6ec47644438b3f079de8576eb1
+              host: '{#SERVERNAME}'
+              name: '{#SERVERNAME}'
+              inventory_mode: AUTOMATIC
+              group_links:
+                - group:
+                    name: DKDMS
+                - group:
+                    name: 'Storage Protect Instances'
+              templates:
+                - name: 'Template IBM Storage Protect Wrapper'
+              tags:
+                - tag: company_id
+                  value: DKDMS
+                - tag: company_name
+                  value: 'DMsave A/S'
+                - tag: country_code
+                  value: DK
+                - tag: erp_id
+                  value: ERP-87786
+                - tag: service
+                  value: BACKUP
+              custom_interfaces: 'YES'
+              interfaces:
+                - ip: '{#ADDRESS}'
+      macros:
+        - macro: '{$TSM_HOST}'
+          value: <TSM_INSTANCE>
+          description: 'IBM SP instance to query servers from'

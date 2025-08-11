@@ -1,0 +1,132 @@
+# Operating System files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# IDE and Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.settings/
+
+# Log files
+*.log
+logs/
+*.out
+
+# Temporary files
+*.tmp
+*.temp
+/tmp/
+.tmp/
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# Zabbix specific
+zabbix_agentd.conf.local
+zabbix_agent2.conf.local
+
+# Credentials and sensitive data
+*.key
+*.pem
+*.p12
+credentials.txt
+passwords.txt
+secrets.*
+config/environment.conf
+config/production.conf
+*.local.sh
+*_production.sh
+
+# TSM/Storage Protect specific
+dsm.opt.local
+dsm.sys.local
+*.lock
+dsmadmc_*.lock
+
+# Archives and compressed files
+*.zip
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+
+# Documentation builds
+/docs/build/
+/docs/_build/
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+
+# Dependency directories
+node_modules/
+
+# Optional npm cache directory
+.npm
+
+# Optional REPL history
+.node_repl_history
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+# dotenv environment variables file
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Personal configuration files
+config.local.*
+*.local
+
+# Security documentation with sensitive info (for public repos)
+SECURITY.md
+
+# Test files and directories
+test_output/
+test_results/
+testing/

@@ -1,0 +1,984 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: a0c1c980c4d14e5bbfaaa88e0a08d7e0
+      name: 'Templates'
+  templates:
+    - uuid: ccb5b7e728c9466780281618943b680d
+      template: 'Template IBM Storage Protect Wrapper'
+      name: 'Template IBM Storage Protect Wrapper'
+      description: |
+        This Zabbix template monitors IBM Storage Protect (TSM) servers using custom scripts that leverage the dsmadmc CLI. 
+        
+        It auto-discovers key metrics on storage pools, volumes, backups, connectivity, sessions, and administrative tasks—delivering JSON-formatted data for Zabbix Low-Level Discovery and alerting.
+        
+        Use 	"Discover IBM Storage Protect Instances" template to discover instances
+      templates:
+        - name: 'ICMP Ping'
+      groups:
+        - name: 'Templates'
+      items:
+        - uuid: 5601ce13d99846c3abfca4b5d42e43e9
+          name: 'IBM SP: Unavailable Containers'
+          type: TRAP
+          key: storage_protect.container.status
+          delay: '0'
+          description: 'Count of containers that are not in AVAILABLE state'
+          tags:
+            - tag: application
+              value: 'STORAGE PROTECT'
+            - tag: item_type
+              value: TRAPPER
+          triggers:
+            - uuid: a68e9a6633024ae19ed704c5f96c2f71
+              expression: 'nodata(/Template IBM Storage Protect Wrapper/storage_protect.container.status,10m)=1'
+              name: 'IBM SP: Container check failed or timed out'
+              opdata: 'Error: {ITEM.LASTVALUE}'
+              priority: WARNING
+              description: 'Container check script failed to provide valid data. Check if the TSM connection is working but reporting errors, or if the script execution timed out.'
+              manual_close: 'YES'
+            - uuid: 60aef8ecf147488e8c27a36c981b24b4
+              expression: 'min(/Template IBM Storage Protect Wrapper/storage_protect.container.status,#3)>3'
+              name: 'IBM SP: {ITEM.LASTVALUE} unavailable container(s) detected'
+              priority: AVERAGE
+              description: '{ITEM.LASTVALUE} containers are not in AVAILABLE state'
+              manual_close: 'YES'
+              dependencies:
+                - name: 'IBM SP: Data collection Failed: {ITEM.LASTVALUE}'
+                  expression: 'count(/Template IBM Storage Protect Wrapper/storage_protect_collection.error,#3,"gt","")=3'
+        - uuid: b2e98c8755ed49a28ffc3966bc914783
+          name: 'IBM SP: Volume States'
+          type: TRAP
+          key: storage_protect.volume.status
+          delay: '0'
+          history: 1d
+          value_type: TEXT
+          trends: '0'
+          tags:
+            - tag: application
+              value: 'STORAGE PROTECT'
+            - tag: item_type
+              value: TRAPPER
+        - uuid: 8bba76f6a3234e35b9088f19af774ea0
+          name: 'IBM SP: Restore Test Status'
+          type: EXTERNAL
+          key: 'storage_protect_backup.sh[-i,{HOST.NAME},-u,{$TSM_USER},-p,{$TSM_PASS},-o,restore]'
+          delay: 10m
+          history: 90d
+          status: DISABLED
+          description: |
+            Tests the restore functionality and returns a numeric status code
+            
+            0 - Success
+            1 - Failed
+            2 - Connection/Server Error
+          tags:
+            - tag: application
+              value: 'STORAGE PROTECT'
+            - tag: item_type
+              value: EXTERNAL_CHECK
+          triggers:
+            - uuid: 852a956db28c4e1fb586892c347b9393
+              expression: 'nodata(/Template IBM Storage Protect Wrapper/storage_protect_backup.sh[-i,{HOST.NAME},-u,{$TSM_USER},-p,{$TSM_PASS},-o,restore],30m)=1'
+              name: 'IBM SP: Restore check failed or timed out'
+              priority: WARNING
+              description: 'No data is received for 10 minutes from the restore test'
+            - uuid: ea25160e77364b3cb01f49b0ca53a5f4
+              expression: 'min(/Template IBM Storage Protect Wrapper/storage_protect_backup.sh[-i,{HOST.NAME},-u,{$TSM_USER},-p,{$TSM_PASS},-o,restore],#2)<>1'
+              name: 'IBM SP: Restore test failed (Status code: {ITEM.LASTVALUE})'
+              priority: AVERAGE
+              description: |
+                The Storage Protect restore test has failed, indicating potential issues with the restore functionality. A successful test should restore exactly one object.
+                
+                Current Status: {ITEM.LASTVALUE}
+                
+                Check:
+                * TSM server connectivity
+                * Backup media accessibility
+                * Client authentication
+                * Error logs on Zabbix Proxy > /var/log//dsmerror_{HOST.NAME}.log
+              manual_close: 'YES'
+              dependencies:
+                - name: 'IBM SP: Data collection Failed: {ITEM.LASTVALUE}'
+                  expression: 'count(/Template IBM Storage Protect Wrapper/storage_protect_collection.error,#3,"gt","")=3'
+        - uuid: 027bffa2d7b8427fba2c7aab1c71211b
+          name: 'IBM SP: Collection Error'
+          type: DEPENDENT
+          key: storage_protect_collection.error
+          delay: '0'
+          history: 90d
+          value_type: TEXT
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.error
+              error_handler: CUSTOM_ERROR
+              error_handler_params: 'No errors detected'
+          master_item:
+            key: 'storage_protect_pool_collector.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}]'
+          tags:
+            - tag: application
+              value: 'STORAGE PROTECT'
+            - tag: item_type
+              value: DEPENDENT
+          triggers:
+            - uuid: 9ac75342f42c46acbaf93b89358fb7a1
+              expression: 'count(/Template IBM Storage Protect Wrapper/storage_protect_collection.error,#3,"gt","")=3'
+              name: 'IBM SP: Data collection Failed: {ITEM.LASTVALUE}'
+              opdata: 'Error: {ITEM.LASTVALUE}'
+              priority: AVERAGE
+              description: 'Storage Pool data collection failed. Triggers if there''s an issue discovering Storage Pools'
+              manual_close: 'YES'
+        - uuid: b0dc51e845b648aebe9e94ccc3e3abce
+          name: 'IBM SP: Uncompleted Housekeeping Jobs'
+          type: EXTERNAL
+          key: 'storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "Q EVENT *HOUSE* t=a begind=-4 endd=today endtime=now"]'
+          delay: 10m
+          history: 90d
+          value_type: TEXT
+          trends: '0'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - 'return (value.match(/^(?!.*Completed).*[a-zA-Z]/gm) || []).length;'
+          tags:
+            - tag: application
+              value: 'STORAGE PROTECT'
+            - tag: item_type
+              value: EXTERNAL_CHECK
+          triggers:
+            - uuid: 0cebcf0a421b4a3bb3f261ccb907a42d
+              expression: 'min(/Template IBM Storage Protect Wrapper/storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "Q EVENT *HOUSE* t=a begind=-4 endd=today endtime=now"],#3)>=10'
+              name: 'IBM SP: housekeeping jobs critical ({ITEM.LASTVALUE} uncompleted)'
+              priority: AVERAGE
+              description: |
+                There are {ITEM.LASTVALUE} uncompleted housekeeping jobs.
+                - Critical threshold: 10 jobs
+              manual_close: 'YES'
+              dependencies:
+                - name: 'IBM SP: Data collection Failed: {ITEM.LASTVALUE}'
+                  expression: 'count(/Template IBM Storage Protect Wrapper/storage_protect_collection.error,#3,"gt","")=3'
+        - uuid: 46a949cec9ee47f387218c31a54cb529
+          name: 'IBM SP: Client Sessions Status'
+          type: EXTERNAL
+          key: 'storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "SELECT AVAILABILITY FROM STATUS"]'
+          delay: 5m
+          history: 90d
+          value_type: TEXT
+          trends: '0'
+          tags:
+            - tag: application
+              value: 'STORAGE PROTECT'
+            - tag: item_type
+              value: EXTERNAL_CHECK
+          triggers:
+            - uuid: 6be483c52d47493fbd8134e0f1e2a4f5
+              expression: 'last(/Template IBM Storage Protect Wrapper/storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "SELECT AVAILABILITY FROM STATUS"])<>"ENABLED"'
+              name: 'IBM SP: Client sessions {ITEM.LASTVALUE} on {HOST.NAME}'
+              priority: AVERAGE
+              description: |
+                The TSM Storage Protect instance on {HOST.NAME} is reporting client sessions as unavailable. 
+                Sessions are either disabled or there is an issue with the TSM instance. Verify the instance's operational state, session settings, and service logs
+              manual_close: 'YES'
+              dependencies:
+                - name: 'IBM SP: Basic connection failed on {HOST.NAME}'
+                  expression: 'last(/Template IBM Storage Protect Wrapper/storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "SELECT COUNT(*) FROM STATUS"])<1'
+                - name: 'IBM SP: Data collection Failed: {ITEM.LASTVALUE}'
+                  expression: 'count(/Template IBM Storage Protect Wrapper/storage_protect_collection.error,#3,"gt","")=3'
+        - uuid: 259fae1fd4084d26afd291fe10e9c77d
+          name: 'IBM SP: DB Space Utilization'
+          type: EXTERNAL
+          key: 'storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "select cast((100-(cast(sum(TOTAL_FS_SIZE_MB) as decimal(15,2))-cast(sum(USED_FS_SIZE_MB) as decimal(15,2)))/cast(sum(TOTAL_FS_SIZE_MB) as decimal(15,2))*100) as decimal (5,2)) from dbspace"]'
+          delay: 5m
+          history: 90d
+          value_type: FLOAT
+          units: '%'
+          description: |
+            Monitors the used space percentage of TSM database filesystem. The value is calculated as:
+            ((Total Size MB - Free Space MB) / Total Size MB) * 100
+          tags:
+            - tag: application
+              value: 'STORAGE PROTECT'
+            - tag: item_type
+              value: EXTERNAL_CHECK
+          triggers:
+            - uuid: a73f79a6cd6d48daacf3df12780cc04b
+              expression: 'min(/Template IBM Storage Protect Wrapper/storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "select cast((100-(cast(sum(TOTAL_FS_SIZE_MB) as decimal(15,2))-cast(sum(USED_FS_SIZE_MB) as decimal(15,2)))/cast(sum(TOTAL_FS_SIZE_MB) as decimal(15,2))*100) as decimal (5,2)) from dbspace"],#3)>{$TSM_DB_CRIT}'
+              name: 'IBM SP: Database critically full ({ITEM.LASTVALUE}%)'
+              priority: AVERAGE
+              description: |
+                The TSM database filesystem has reached critical utilization level.
+                
+                - Current utilization: {ITEM.LASTVALUE}%
+                - Threshold: {$TSM_DB_CRIT}% (default: 90%)
+                
+                This condition requires immediate attention as running out of database space can cause TSM operations to fail.
+              manual_close: 'YES'
+              dependencies:
+                - name: 'IBM SP: Data collection Failed: {ITEM.LASTVALUE}'
+                  expression: 'count(/Template IBM Storage Protect Wrapper/storage_protect_collection.error,#3,"gt","")=3'
+            - uuid: 6579a63556834259b94d3a00e05efe07
+              expression: 'min(/Template IBM Storage Protect Wrapper/storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "select cast((100-(cast(sum(TOTAL_FS_SIZE_MB) as decimal(15,2))-cast(sum(USED_FS_SIZE_MB) as decimal(15,2)))/cast(sum(TOTAL_FS_SIZE_MB) as decimal(15,2))*100) as decimal (5,2)) from dbspace"],#3)>{$TSM_DB_HIGH}'
+              name: 'IBM SP: Database full warning ({ITEM.LASTVALUE})'
+              opdata: 'Utilization: {ITEM.LASTVALUE}'
+              priority: AVERAGE
+              description: |
+                The TSM database filesystem utilization is approaching a critical level.
+                
+                - Threshold: {$TSM_DB_HIGH}% 
+                
+                Consider taking action to prevent database space issues.
+              manual_close: 'YES'
+              dependencies:
+                - name: 'IBM SP: Database critically full ({ITEM.LASTVALUE}%)'
+                  expression: 'min(/Template IBM Storage Protect Wrapper/storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "select cast((100-(cast(sum(TOTAL_FS_SIZE_MB) as decimal(15,2))-cast(sum(USED_FS_SIZE_MB) as decimal(15,2)))/cast(sum(TOTAL_FS_SIZE_MB) as decimal(15,2))*100) as decimal (5,2)) from dbspace"],#3)>{$TSM_DB_CRIT}'
+        - uuid: 028c80d4b0ea4c3cb1b91346a37b4c4d
+          name: 'IBM SP: Last Expiration'
+          type: EXTERNAL
+          key: 'storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "SELECT CAST((CURRENT_TIMESTAMP - MAX(START_TIME)) SECONDS AS DECIMAL) FROM SUMMARY WHERE ACTIVITY=''EXPIRATION'' AND SUCCESSFUL=''YES''"]'
+          delay: 10m
+          history: 90d
+          value_type: FLOAT
+          units: h
+          description: 'Returns the number of hours since the last successful expiration event'
+          preprocessing:
+            - type: MULTIPLIER
+              parameters:
+                - '0.00027777777'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          tags:
+            - tag: application
+              value: 'STORAGE PROTECT'
+            - tag: item_type
+              value: EXTERNAL_CHECK
+          triggers:
+            - uuid: 3f9e5954a5b54179948c62bce6941221
+              expression: 'min(/Template IBM Storage Protect Wrapper/storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "SELECT CAST((CURRENT_TIMESTAMP - MAX(START_TIME)) SECONDS AS DECIMAL) FROM SUMMARY WHERE ACTIVITY=''EXPIRATION'' AND SUCCESSFUL=''YES''"],#3)>{$TSM_EXPIRATION_CRIT}'
+              name: 'IBM SP: Expiration process critically delayed'
+              priority: AVERAGE
+              description: 'TSM expiration process hasn''t run in ove {$TSM_EXPIRATION_HIGH} hours'
+              manual_close: 'YES'
+              dependencies:
+                - name: 'IBM SP: Data collection Failed: {ITEM.LASTVALUE}'
+                  expression: 'count(/Template IBM Storage Protect Wrapper/storage_protect_collection.error,#3,"gt","")=3'
+            - uuid: 68bcd659bace45ce87340fea0e634512
+              expression: 'min(/Template IBM Storage Protect Wrapper/storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "SELECT CAST((CURRENT_TIMESTAMP - MAX(START_TIME)) SECONDS AS DECIMAL) FROM SUMMARY WHERE ACTIVITY=''EXPIRATION'' AND SUCCESSFUL=''YES''"],#3)>{$TSM_EXPIRATION_HIGH}'
+              name: 'IBM SP: Expiration process delayed (Current: {ITEM.LASTVALUE})'
+              opdata: 'Last run: {ITEM.LASTVALUE} hours ago'
+              priority: AVERAGE
+              description: 'TSM expiration process hasn''t run in over 48 hours'
+              manual_close: 'YES'
+              dependencies:
+                - name: 'IBM SP: Expiration process critically delayed'
+                  expression: 'min(/Template IBM Storage Protect Wrapper/storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "SELECT CAST((CURRENT_TIMESTAMP - MAX(START_TIME)) SECONDS AS DECIMAL) FROM SUMMARY WHERE ACTIVITY=''EXPIRATION'' AND SUCCESSFUL=''YES''"],#3)>{$TSM_EXPIRATION_CRIT}'
+        - uuid: 7b32010767b54581a31802d393011538
+          name: 'IBM SP: Replication Last Run'
+          type: EXTERNAL
+          key: 'storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "SELECT CAST((CURRENT_TIMESTAMP - MAX(START_TIME)) SECONDS AS DECIMAL) FROM SUMMARY WHERE ACTIVITY=''REPLICATION'' AND SUCCESSFUL=''YES''"]'
+          delay: 10m
+          history: 90d
+          value_type: FLOAT
+          description: 'Time in hours since last successful replication process'
+          preprocessing:
+            - type: MULTIPLIER
+              parameters:
+                - '0.00027777777'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          tags:
+            - tag: application
+              value: 'STORAGE PROTECT'
+            - tag: item_type
+              value: EXTERNAL_CHECK
+          triggers:
+            - uuid: 03bfd18b3e3e4f38bcfb8919fc58d7bb
+              expression: 'min(/Template IBM Storage Protect Wrapper/storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "SELECT CAST((CURRENT_TIMESTAMP - MAX(START_TIME)) SECONDS AS DECIMAL) FROM SUMMARY WHERE ACTIVITY=''REPLICATION'' AND SUCCESSFUL=''YES''"],#3)>{$TSM_REPLICATION_CRIT}'
+              name: 'IBM SP: Replication process not running for {ITEM.LASTVALUE} hours'
+              priority: AVERAGE
+              description: 'No successful replication process found in last {$TSM_REPLICATION_CRIT} hours'
+              manual_close: 'YES'
+              dependencies:
+                - name: 'IBM SP: Data collection Failed: {ITEM.LASTVALUE}'
+                  expression: 'count(/Template IBM Storage Protect Wrapper/storage_protect_collection.error,#3,"gt","")=3'
+        - uuid: e654d732d9924b33a6f4aa5b1339ea52
+          name: 'IBM SP: Log Space Utilization'
+          type: EXTERNAL
+          key: 'storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "select cast(100*cast(USED_SPACE_MB as decimal(15,2))/cast(TOTAL_SPACE_MB as decimal(15,2)) as decimal(15,2)) from LOG"]'
+          delay: 5m
+          history: 90d
+          value_type: FLOAT
+          units: '%'
+          description: |
+            Monitors the used space percentage of TSM log filesystem. The value is calculated as:
+            (Used Space MB / Total Space MB) * 100
+          tags:
+            - tag: application
+              value: 'STORAGE PROTECT'
+            - tag: item_type
+              value: EXTERNAL_CHECK
+          triggers:
+            - uuid: 6782738c045b4c90baf6f3d95dd87898
+              expression: 'min(/Template IBM Storage Protect Wrapper/storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "select cast(100*cast(USED_SPACE_MB as decimal(15,2))/cast(TOTAL_SPACE_MB as decimal(15,2)) as decimal(15,2)) from LOG"],#3)>{$TSM_LOG_CRIT}'
+              name: 'IBM SP: Log space critically full ({ITEM.LASTVALUE}%)'
+              priority: AVERAGE
+              description: |
+                The TSM log filesystem has reached critical utilization level.
+                
+                - Current utilization: {ITEM.LASTVALUE}%
+                - Threshold: {$TSM_LOG_CRIT}% (default: 90%)
+                
+                This condition requires immediate attention as running out of log space can cause TSM operations to fail.
+              manual_close: 'YES'
+              dependencies:
+                - name: 'IBM SP: Data collection Failed: {ITEM.LASTVALUE}'
+                  expression: 'count(/Template IBM Storage Protect Wrapper/storage_protect_collection.error,#3,"gt","")=3'
+            - uuid: 38f4b6ff83e74d7e964aa314f205e8cc
+              expression: 'min(/Template IBM Storage Protect Wrapper/storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "select cast(100*cast(USED_SPACE_MB as decimal(15,2))/cast(TOTAL_SPACE_MB as decimal(15,2)) as decimal(15,2)) from LOG"],#3)>{$TSM_LOG_HIGH}'
+              name: 'IBM SP: Log space warning ({ITEM.LASTVALUE}%)'
+              priority: AVERAGE
+              description: |
+                The TSM log filesystem utilization is approaching a critical level.
+                
+                - Current utilization: {ITEM.LASTVALUE}%
+                - Threshold: {$TSM_LOG_WARN}% (default: 80%)
+                
+                Consider taking action to prevent log space issues.
+              manual_close: 'YES'
+              dependencies:
+                - name: 'IBM SP: Log space critically full ({ITEM.LASTVALUE}%)'
+                  expression: 'min(/Template IBM Storage Protect Wrapper/storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "select cast(100*cast(USED_SPACE_MB as decimal(15,2))/cast(TOTAL_SPACE_MB as decimal(15,2)) as decimal(15,2)) from LOG"],#3)>{$TSM_LOG_CRIT}'
+        - uuid: ca69d9ba40c9470ea194f0c474248015
+          name: 'IBM SP: Schedules Inactive Count'
+          type: EXTERNAL
+          key: 'storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "select count(*) from admin_schedules where active=''NO''"]'
+          delay: 10m
+          history: 90d
+          tags:
+            - tag: application
+              value: 'STORAGE PROTECT'
+            - tag: item_type
+              value: EXTERNAL_CHECK
+          triggers:
+            - uuid: 2e513ff0328b46719e698bb24018f396
+              expression: 'min(/Template IBM Storage Protect Wrapper/storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "select count(*) from admin_schedules where active=''NO''"],#3)>={$TSM_SCHEDULES_CRIT}'
+              name: 'IBM SP: Inactive schedules without user critical ({ITEM.LASTVALUE} found)'
+              priority: AVERAGE
+              description: |
+                There are {ITEM.LASTVALUE} inactive admin schedules that have no active user assigned.
+                - Critical threshold: 8 schedules
+              manual_close: 'YES'
+              dependencies:
+                - name: 'IBM SP: Data collection Failed: {ITEM.LASTVALUE}'
+                  expression: 'count(/Template IBM Storage Protect Wrapper/storage_protect_collection.error,#3,"gt","")=3'
+            - uuid: 76630f8e70334b3087234d8a9f4583d6
+              expression: 'min(/Template IBM Storage Protect Wrapper/storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "select count(*) from admin_schedules where active=''NO''"],#3)>={$TSM_SCHEDULES_HIGH}'
+              name: 'IBM SP: Inactive schedules without user warning ({ITEM.LASTVALUE} found)'
+              priority: AVERAGE
+              description: |
+                There are {ITEM.LASTVALUE} inactive admin schedules.
+                - Warning threshold: 1 schedule
+                - Critical threshold: 8 schedules
+              manual_close: 'YES'
+              dependencies:
+                - name: 'IBM SP: Inactive schedules without user critical ({ITEM.LASTVALUE} found)'
+                  expression: 'min(/Template IBM Storage Protect Wrapper/storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "select count(*) from admin_schedules where active=''NO''"],#3)>={$TSM_SCHEDULES_CRIT}'
+        - uuid: d75bd8a99cea4837898d8dd82a442f91
+          name: 'IBM SP: Schedules No User Count'
+          type: EXTERNAL
+          key: 'storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "select count(*) from admin_schedules where active=''YES'' and chg_admin not in (select admin_name from admins)"]'
+          delay: 10m
+          history: 90d
+          tags:
+            - tag: application
+              value: 'STORAGE PROTECT'
+            - tag: item_type
+              value: EXTERNAL_CHECK
+          triggers:
+            - uuid: 9bf8bb3a6f6845dca310161455750d96
+              expression: 'min(/Template IBM Storage Protect Wrapper/storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "select count(*) from admin_schedules where active=''YES'' and chg_admin not in (select admin_name from admins)"],#3)>={$TSM_SCHEDULES_CRIT}'
+              name: 'IBM SP: Admin schedules without user critical ({ITEM.LASTVALUE} found)'
+              priority: AVERAGE
+              description: |
+                There are {ITEM.LASTVALUE} admin schedules that have no active user assigned.
+                - Critical threshold: {$TSM_SCHEDULES_CRIT}
+              manual_close: 'YES'
+              dependencies:
+                - name: 'IBM SP: Data collection Failed: {ITEM.LASTVALUE}'
+                  expression: 'count(/Template IBM Storage Protect Wrapper/storage_protect_collection.error,#3,"gt","")=3'
+            - uuid: a1a0321d3229474da3d0d901f762e808
+              expression: 'min(/Template IBM Storage Protect Wrapper/storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "select count(*) from admin_schedules where active=''YES'' and chg_admin not in (select admin_name from admins)"],#3)>={$TSM_SCHEDULES_HIGH}'
+              name: 'IBM SP: Admin schedules without user warning ({ITEM.LASTVALUE} found)'
+              priority: AVERAGE
+              description: |
+                There are {ITEM.LASTVALUE} admin schedules that have no active user assigned.
+                
+                - Warning threshold: {$TSM_SCHEDULES_HIGH} schedule
+                - Critical threshold: {$TSM_SCHEDULES_CRIT} schedules
+              manual_close: 'YES'
+              dependencies:
+                - name: 'IBM SP: Admin schedules without user critical ({ITEM.LASTVALUE} found)'
+                  expression: 'min(/Template IBM Storage Protect Wrapper/storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "select count(*) from admin_schedules where active=''YES'' and chg_admin not in (select admin_name from admins)"],#3)>={$TSM_SCHEDULES_CRIT}'
+        - uuid: 064f98b148724077906ba80f6603538a
+          name: 'IBM SP: Basic Connection Status'
+          type: EXTERNAL
+          key: 'storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "SELECT COUNT(*) FROM STATUS"]'
+          delay: 5m
+          history: 90d
+          trends: '0'
+          valuemap:
+            name: 'Connection up/down'
+          tags:
+            - tag: application
+              value: 'STORAGE PROTECT'
+            - tag: item_type
+              value: EXTERNAL_CHECK
+          triggers:
+            - uuid: a45448bbce73493e8b9825038f312937
+              expression: 'last(/Template IBM Storage Protect Wrapper/storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "SELECT COUNT(*) FROM STATUS"])<1'
+              name: 'IBM SP: Basic connection failed on {HOST.NAME}'
+              priority: AVERAGE
+              description: |
+                The TSM Storage Protect instance on {HOST.NAME} is unreachable. 
+                
+                The basic connectivity check failed, indicating that the instance may be down or there are communication issues. 
+                
+                A return value of 1 signifies a failure in establishing a connection.
+                
+                Investigate network access, credentials, or TSM service availability.
+              manual_close: 'YES'
+              dependencies:
+                - name: 'IBM SP: Data collection Failed: {ITEM.LASTVALUE}'
+                  expression: 'count(/Template IBM Storage Protect Wrapper/storage_protect_collection.error,#3,"gt","")=3'
+        - uuid: 7a853365b3d2439291cdc84b0d591d5a
+          name: 'IBM SP: Unprotected Storage Pools'
+          type: EXTERNAL
+          key: 'storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "select COUNT(*) from stgpools where stg_type=''DIRECTORY'' and ((PROTECTSTGPOOL is not null and LASTPROTECT_DATE< current_timestamp - 36 hours) or (PROTECTLOCALSTGPOOLS is not null and LASTPROTECTLOCAL_DATE< current_timestamp - 36 hours))"]'
+          delay: 10m
+          history: 90d
+          tags:
+            - tag: application
+              value: 'STORAGE PROTECT'
+            - tag: item_type
+              value: EXTERNAL_CHECK
+          triggers:
+            - uuid: 39083b2338ac4e17b931164294e07f43
+              expression: 'min(/Template IBM Storage Protect Wrapper/storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "select COUNT(*) from stgpools where stg_type=''DIRECTORY'' and ((PROTECTSTGPOOL is not null and LASTPROTECT_DATE< current_timestamp - 36 hours) or (PROTECTLOCALSTGPOOLS is not null and LASTPROTECTLOCAL_DATE< current_timestamp - 36 hours))"],#3)>0'
+              name: 'IBM SP: Unprotected storage pools detected ({ITEM.LASTVALUE} pools)'
+              priority: AVERAGE
+              description: 'Found {ITEM.LASTVALUE} storage pools that need protection.'
+              manual_close: 'YES'
+              dependencies:
+                - name: 'IBM SP: Data collection Failed: {ITEM.LASTVALUE}'
+                  expression: 'count(/Template IBM Storage Protect Wrapper/storage_protect_collection.error,#3,"gt","")=3'
+        - uuid: 69f5713940ef4829ab0ea4a8d5a0a099
+          name: 'IBM SP: Critical Storage Pool Directories'
+          type: EXTERNAL
+          key: 'storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "select COUNT(*) from STGPOOL_DIRS where ACCESS=''DESTROYED'' or ACCESS=''UNAVAILABLE''", -f, zabbix]'
+          delay: 5m
+          description: 'Count of storage pool directories in DESTROYED or UNAVAILABLE state which require immediate attention'
+          tags:
+            - tag: application
+              value: 'STORAGE PROTECT'
+            - tag: item_type
+              value: EXTERNAL_CHECK
+          triggers:
+            - uuid: 3f11c174501c47dd9810b3521070586a
+              expression: 'min(/Template IBM Storage Protect Wrapper/storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "select COUNT(*) from STGPOOL_DIRS where ACCESS=''DESTROYED'' or ACCESS=''UNAVAILABLE''", -f, zabbix],#2)>0'
+              name: 'IBM SP: CRITICAL - Damaged storage pool directories detected'
+              priority: HIGH
+              description: |
+                Critical alert: One or more storage pool directories are in DESTROYED or UNAVAILABLE state.
+                        
+                This condition requires IMMEDIATE attention as it indicates serious storage issues that could impact backup and restore operations. This is one of the few alerts that should trigger off-hours on-call support.
+              manual_close: 'YES'
+              dependencies:
+                - name: 'IBM SP: Basic connection failed on {HOST.NAME}'
+                  expression: 'last(/Template IBM Storage Protect Wrapper/storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "SELECT COUNT(*) FROM STATUS"])<1'
+                - name: 'IBM SP: Data collection Failed: {ITEM.LASTVALUE}'
+                  expression: 'count(/Template IBM Storage Protect Wrapper/storage_protect_collection.error,#3,"gt","")=3'
+        - uuid: a3b052f5d2ba47b1854d72578d9c0e81
+          name: 'IBM SP: Database Backup Status'
+          type: EXTERNAL
+          key: 'storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "select min(day(current_timestamp-end_time)) from summary where activity in (''FULL_DBBACKUP'',''INCR_DBBACKUP'') and successful=''YES'' and end_time> current_timestamp - 28 days"]'
+          delay: 10m
+          history: 90d
+          description: 'Returns the minimum age (in days) of successful database backups'
+          tags:
+            - tag: application
+              value: 'STORAGE PROTECT'
+            - tag: item_type
+              value: EXTERNAL_CHECK
+          triggers:
+            - uuid: 693546bbb2d7454db837dca1dd2a7ca9
+              expression: 'min(/Template IBM Storage Protect Wrapper/storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "select min(day(current_timestamp-end_time)) from summary where activity in (''FULL_DBBACKUP'',''INCR_DBBACKUP'') and successful=''YES'' and end_time> current_timestamp - 28 days"],#3) >= {$TSM_DBBACKUP_HIGH}'
+              name: 'IBM SP: DB Backup critically old (Current: {ITEM.LASTVALUE} days)'
+              priority: AVERAGE
+              description: 'Fires when the backup age is at or above {$TSM_DBBACKUP_HIGH}'
+              manual_close: 'YES'
+              dependencies:
+                - name: 'IBM SP: Data collection Failed: {ITEM.LASTVALUE}'
+                  expression: 'count(/Template IBM Storage Protect Wrapper/storage_protect_collection.error,#3,"gt","")=3'
+            - uuid: 64d96229f2fe499e80645dd3d7dd6a62
+              expression: |
+                (min(/Template IBM Storage Protect Wrapper/storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "select min(day(current_timestamp-end_time)) from summary where activity in ('FULL_DBBACKUP','INCR_DBBACKUP') and successful='YES' and end_time> current_timestamp - 28 days"],#3) >= {$TSM_DBBACKUP_CRIT})
+                and
+                (min(/Template IBM Storage Protect Wrapper/storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "select min(day(current_timestamp-end_time)) from summary where activity in ('FULL_DBBACKUP','INCR_DBBACKUP') and successful='YES' and end_time> current_timestamp - 28 days"],#3) < {$TSM_DBBACKUP_CRIT})
+              name: 'IBM SP: DB Backup too old (Current: {ITEM.LASTVALUE} days)'
+              priority: AVERAGE
+              description: 'Fires when the backup age is at or above {$TSM_DBBACKUP_HIGH} days but below {$TSM_DBBACKUP_CRIT}'
+              manual_close: 'YES'
+              dependencies:
+                - name: 'IBM SP: DB Backup critically old (Current: {ITEM.LASTVALUE} days)'
+                  expression: 'min(/Template IBM Storage Protect Wrapper/storage_protect_dsmadmc.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}, -q, "select min(day(current_timestamp-end_time)) from summary where activity in (''FULL_DBBACKUP'',''INCR_DBBACKUP'') and successful=''YES'' and end_time> current_timestamp - 28 days"],#3) >= {$TSM_DBBACKUP_HIGH}'
+        - uuid: c31ef2f3e74449aebd1e40d602dd2109
+          name: 'IBM SP: Pool collector'
+          type: EXTERNAL
+          key: 'storage_protect_pool_collector.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}]'
+          delay: 5m
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          tags:
+            - tag: application
+              value: 'STORAGE PROTECT'
+            - tag: item_type
+              value: EXTERNAL_CHECK
+          triggers:
+            - uuid: e8fa04475f594eabb221eddb760c02bb
+              expression: 'nodata(/Template IBM Storage Protect Wrapper/storage_protect_pool_collector.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}],5m)=1'
+              name: 'IBM SP: Pool Collector failed or timed out'
+              priority: WARNING
+              description: |
+                No data is received for 5 minutes from the pool collector OR
+                The error field in the collection status is not empty
+        - uuid: 1d6e95e342b94ee2868548afe17c7c4b
+          name: 'IBM SP: Volumes in destroyed state'
+          type: DEPENDENT
+          key: 'storage_protect_volume.destroyed[{HOST.NAME}]'
+          delay: '0'
+          history: 90d
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.volumes.destroyed
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          master_item:
+            key: storage_protect.volume.status
+          tags:
+            - tag: application
+              value: 'STORAGE PROTECT'
+            - tag: item_type
+              value: DEPENDENT
+          triggers:
+            - uuid: 9d5a87ea5e7145b884c8f1c92efb4979
+              expression: 'min(/Template IBM Storage Protect Wrapper/storage_protect_volume.destroyed[{HOST.NAME}],#3)>0'
+              name: 'IBM SP: {ITEM.LASTVALUE} volume(s) in DESTROYED state'
+              priority: AVERAGE
+              description: 'One or more TSM tape volumes are in DESTROYED state, indicating physical media damage or catalog corruption. These volumes require immediate attention as backup data on them is inaccessible and at risk of permanent loss. Check the TSM activity log for related errors and consider emergency data recovery procedures.'
+              manual_close: 'YES'
+              dependencies:
+                - name: 'IBM SP: Data collection Failed: {ITEM.LASTVALUE}'
+                  expression: 'count(/Template IBM Storage Protect Wrapper/storage_protect_collection.error,#3,"gt","")=3'
+        - uuid: c8e341986be840a2a973ac1afa304dc8
+          name: 'IBM SP: Volumes in OFFSITE state'
+          type: DEPENDENT
+          key: 'storage_protect_volume.offsite[{HOST.NAME}]'
+          delay: '0'
+          history: 90d
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.volumes.OFFSITE
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          master_item:
+            key: storage_protect.volume.status
+          tags:
+            - tag: application
+              value: 'STORAGE PROTECT'
+            - tag: item_type
+              value: DEPENDENT
+          triggers:
+            - uuid: 0d2f50d01c9a480ab7a90ab2c5b7a646
+              expression: 'min(/Template IBM Storage Protect Wrapper/storage_protect_volume.offsite[{HOST.NAME}],#3)>0'
+              name: 'IBM SP: {ITEM.LASTVALUE} volume(s) in OFFSITE state'
+              priority: AVERAGE
+              description: 'IBM Storage Protect has detected {ITEM.LASTVALUE} volumes in OFFSITE state. While this is typically part of normal operations for disaster recovery, verify these volumes are correctly recorded in your media tracking system. Excessive or unexpected OFFSITE volumes may indicate configuration issues or unreturned media'
+              manual_close: 'YES'
+              dependencies:
+                - name: 'IBM SP: Data collection Failed: {ITEM.LASTVALUE}'
+                  expression: 'count(/Template IBM Storage Protect Wrapper/storage_protect_collection.error,#3,"gt","")=3'
+        - uuid: e657e19b9f434d2f9c22c686244cfb63
+          name: 'IBM SP: Volumes in READONLY state'
+          type: DEPENDENT
+          key: 'storage_protect_volume.readonly[{HOST.NAME}]'
+          delay: '0'
+          history: 90d
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.volumes.READONLY
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          master_item:
+            key: storage_protect.volume.status
+          tags:
+            - tag: application
+              value: 'STORAGE PROTECT'
+            - tag: item_type
+              value: DEPENDENT
+          triggers:
+            - uuid: 7e827cee9efa4e0c804b6d4fd421119b
+              expression: 'min(/Template IBM Storage Protect Wrapper/storage_protect_volume.readonly[{HOST.NAME}],#3)>0'
+              name: 'IBM SP: {ITEM.LASTVALUE} volume(s) in READONLY state'
+              priority: AVERAGE
+              description: 'One or more TSM volumes are in READONLY state, preventing new backup data from being written. This indicates either media write errors, drive hardware failures, or volumes that have reached capacity limits. Investigate immediately as this impacts backup operations and may result in failed backups'
+              manual_close: 'YES'
+              dependencies:
+                - name: 'IBM SP: Data collection Failed: {ITEM.LASTVALUE}'
+                  expression: 'count(/Template IBM Storage Protect Wrapper/storage_protect_collection.error,#3,"gt","")=3'
+        - uuid: 03e6bf2172324db982556607c8945d0c
+          name: 'IBM SP: Volumes in unavailable state'
+          type: DEPENDENT
+          key: 'storage_protect_volume.unavailable[{HOST.NAME}]'
+          delay: '0'
+          history: 90d
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.volumes.UNAVAILABLE
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          master_item:
+            key: storage_protect.volume.status
+          tags:
+            - tag: application
+              value: 'STORAGE PROTECT'
+            - tag: item_type
+              value: DEPENDENT
+          triggers:
+            - uuid: fd4b4d6b74a6428d90abf365b305ab98
+              expression: 'min(/Template IBM Storage Protect Wrapper/storage_protect_volume.unavailable[{HOST.NAME}],#3)>0'
+              name: 'IBM SP: {ITEM.LASTVALUE} volume(s) in UNAVAILABLE state'
+              priority: AVERAGE
+              description: 'TSM reports {ITEM.LASTVALUE} volumes in UNAVAILABLE state, meaning these volumes cannot be accessed by the system. This typically indicates hardware failures, missing media, or library errors. Check physical media, hardware connections, and TSM error logs. Immediate action required as restore operations may be impacted.'
+              manual_close: 'YES'
+              dependencies:
+                - name: 'IBM SP: Data collection Failed: {ITEM.LASTVALUE}'
+                  expression: 'count(/Template IBM Storage Protect Wrapper/storage_protect_collection.error,#3,"gt","")=3'
+        - uuid: c29a74da348d48729fa5f0028d4f9933
+          name: 'IBM SP: Volumes in unknownstate'
+          type: DEPENDENT
+          key: 'storage_protect_volume.unknown[{HOST.NAME}]'
+          delay: '0'
+          history: 90d
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.volumes.unknown
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          master_item:
+            key: storage_protect.volume.status
+          tags:
+            - tag: application
+              value: 'STORAGE PROTECT'
+            - tag: item_type
+              value: DEPENDENT
+          triggers:
+            - uuid: 003da881053b43d7a237f256792ad65b
+              expression: 'min(/Template IBM Storage Protect Wrapper/storage_protect_volume.unknown[{HOST.NAME}],#3)>0'
+              name: 'IBM SP: {ITEM.LASTVALUE} volume(s) in UNKNOWN state'
+              priority: AVERAGE
+              description: 'IBM Storage Protect has detected {ITEM.LASTVALUE} volumes in an UNKNOWN state, which indicates a serious communication or catalog issue. The system cannot determine the status of these volumes, potentially impacting both backup and restore operations. Urgent investigation required - check TSM server connectivity, hardware status, and activity logs.'
+              manual_close: 'YES'
+              dependencies:
+                - name: 'IBM SP: Data collection Failed: {ITEM.LASTVALUE}'
+                  expression: 'count(/Template IBM Storage Protect Wrapper/storage_protect_collection.error,#3,"gt","")=3'
+      discovery_rules:
+        - uuid: e1616f6a5ba84d16a08a74ba60726f51
+          name: 'Discover Storage Protect: Storage Pools'
+          type: DEPENDENT
+          key: storage_protect.pool.discovery
+          delay: '0'
+          enabled_lifetime_type: DISABLE_NEVER
+          item_prototypes:
+            - uuid: f35500528e23401183fd7b13210ecd8e
+              name: 'Pool {#POOLNAME}: Access'
+              type: DEPENDENT
+              key: 'storage_protect.pool.access[{#POOLNAME}]'
+              delay: '0'
+              history: 90d
+              value_type: TEXT
+              trends: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.metrics_stgpool["{#POOLNAME}"].access'
+              master_item:
+                key: 'storage_protect_pool_collector.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}]'
+              tags:
+                - tag: application
+                  value: 'STORAGE PROTECT'
+                - tag: item_type
+                  value: DEPENDENT
+                - tag: metric
+                  value: capacity
+                - tag: scope
+                  value: storage
+                - tag: type
+                  value: pool
+              trigger_prototypes:
+                - uuid: 075e69607851459089b48b7a6baa7926
+                  expression: 'last(/Template IBM Storage Protect Wrapper/storage_protect.pool.access[{#POOLNAME}])<>"READWRITE"'
+                  name: 'IBM SP: Pool {#POOLNAME}: Abnormal access state ({ITEM.LASTVALUE})'
+                  priority: AVERAGE
+                  description: 'Storage pool has abnormal access state (not READWRITE). Check pool status and accessibility. May impact backup/restore operations.'
+                  manual_close: 'YES'
+                  dependencies:
+                    - name: 'IBM SP: Data collection Failed: {ITEM.LASTVALUE}'
+                      expression: 'count(/Template IBM Storage Protect Wrapper/storage_protect_collection.error,#3,"gt","")=3'
+            - uuid: c012c400bf5648e5a43ac10ec6785630
+              name: 'Pool {#POOLNAME}: Device'
+              type: DEPENDENT
+              key: 'storage_protect.pool.device[{#POOLNAME}]'
+              delay: '0'
+              history: 90d
+              value_type: TEXT
+              trends: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.metrics_stgpool["{#POOLNAME}"].device'
+              master_item:
+                key: 'storage_protect_pool_collector.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}]'
+              tags:
+                - tag: application
+                  value: 'STORAGE PROTECT'
+                - tag: item_type
+                  value: DEPENDENT
+                - tag: metric
+                  value: capacity
+                - tag: scope
+                  value: storage
+                - tag: type
+                  value: pool
+            - uuid: 2e73af9e334548ab97ac45b3077a81f5
+              name: 'Pool {#POOLNAME}: Name'
+              type: DEPENDENT
+              key: 'storage_protect.pool.name[{#POOLNAME}]'
+              delay: '0'
+              history: 90d
+              value_type: TEXT
+              trends: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.metrics_stgpool["{#POOLNAME}"].poolname'
+              master_item:
+                key: 'storage_protect_pool_collector.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}]'
+            - uuid: a8bae0f4d12d4322970fca78b7bcad87
+              name: 'Pool {#POOLNAME}: Pool Type'
+              type: DEPENDENT
+              key: 'storage_protect.pool.pool_type[{#POOLNAME}]'
+              delay: '0'
+              history: 90d
+              value_type: TEXT
+              trends: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.metrics_stgpool["{#POOLNAME}"].pooltype'
+              master_item:
+                key: 'storage_protect_pool_collector.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}]'
+              tags:
+                - tag: application
+                  value: 'STORAGE PROTECT'
+                - tag: item_type
+                  value: DEPENDENT
+                - tag: metric
+                  value: capacity
+                - tag: scope
+                  value: storage
+                - tag: type
+                  value: pool
+            - uuid: aeb8d1b317f54837b7c5211b3c7e9970
+              name: 'Pool {#POOLNAME}: Reuse Delay'
+              type: DEPENDENT
+              key: 'storage_protect.pool.reuse_delay[{#POOLNAME}]'
+              delay: '0'
+              history: 90d
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.metrics_stgpool["{#POOLNAME}"].reusedelay'
+              master_item:
+                key: 'storage_protect_pool_collector.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}]'
+              tags:
+                - tag: application
+                  value: 'STORAGE PROTECT'
+                - tag: item_type
+                  value: DEPENDENT
+                - tag: metric
+                  value: capacity
+                - tag: scope
+                  value: storage
+                - tag: type
+                  value: pool
+            - uuid: addc14d59f5443f2ad76101f86f3377f
+              name: 'Pool {#POOLNAME}: Device Type'
+              type: DEPENDENT
+              key: 'storage_protect.pool.type[{#POOLNAME}]'
+              delay: '0'
+              history: 90d
+              value_type: TEXT
+              trends: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.metrics_stgpool["{#POOLNAME}"].type'
+              master_item:
+                key: 'storage_protect_pool_collector.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}]'
+              tags:
+                - tag: application
+                  value: 'STORAGE PROTECT'
+                - tag: item_type
+                  value: DEPENDENT
+                - tag: metric
+                  value: capacity
+                - tag: scope
+                  value: storage
+                - tag: type
+                  value: pool
+            - uuid: fff013e281424ec4a3342ea3fae4098a
+              name: 'Pool {#POOLNAME}: Utilization'
+              type: DEPENDENT
+              key: 'storage_protect.pool.util[{#POOLNAME}]'
+              delay: '0'
+              history: 90d
+              value_type: FLOAT
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.metrics_stgpool["{#POOLNAME}"].utilization'
+              master_item:
+                key: 'storage_protect_pool_collector.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}]'
+              tags:
+                - tag: application
+                  value: 'STORAGE PROTECT'
+                - tag: item_type
+                  value: DEPENDENT
+                - tag: metric
+                  value: capacity
+                - tag: scope
+                  value: storage
+                - tag: type
+                  value: pool
+              trigger_prototypes:
+                - uuid: f7b270efe68e44bc8f88f23102838af8
+                  expression: 'last(/Template IBM Storage Protect Wrapper/storage_protect.pool.util[{#POOLNAME}])>{$POOL_UTIL_CRIT} and {#ISMETADISK}="YES"'
+                  name: 'IBM SP: Pool {#POOLNAME}: Critical utilization ({ITEM.LASTVALUE}%)'
+                  priority: AVERAGE
+                  description: 'Metadata disk pool utilization exceeds critical threshold (98%). Urgent action required to prevent backup failures.'
+                  manual_close: 'YES'
+                  dependencies:
+                    - name: 'IBM SP: Data collection Failed: {ITEM.LASTVALUE}'
+                      expression: 'count(/Template IBM Storage Protect Wrapper/storage_protect_collection.error,#3,"gt","")=3'
+                - uuid: e48fff84dbe54195a9674147ccd5e9f2
+                  expression: 'last(/Template IBM Storage Protect Wrapper/storage_protect.pool.util[{#POOLNAME}])>{$POOL_UTIL_HIGH} and {#ISMETADISK}="YES"'
+                  name: 'IBM SP: Pool {#POOLNAME}: High utilization ({ITEM.LASTVALUE}%)'
+                  priority: AVERAGE
+                  description: 'Metadata disk pool utilization approaching critical levels (>95%). Plan for capacity expansion or data cleanup'
+                  manual_close: 'YES'
+                  dependencies:
+                    - name: 'IBM SP: Data collection Failed: {ITEM.LASTVALUE}'
+                      expression: 'count(/Template IBM Storage Protect Wrapper/storage_protect_collection.error,#3,"gt","")=3'
+                    - name: 'IBM SP: Pool {#POOLNAME}: Critical utilization ({ITEM.LASTVALUE}%)'
+                      expression: 'last(/Template IBM Storage Protect Wrapper/storage_protect.pool.util[{#POOLNAME}])>{$POOL_UTIL_CRIT} and {#ISMETADISK}="YES"'
+          trigger_prototypes:
+            - uuid: dba0671d35c0496bb65ebde7ee4d8038
+              expression: |
+                last(/Template IBM Storage Protect Wrapper/storage_protect.pool.reuse_delay[{#POOLNAME}])<1 and last(/Template IBM Storage Protect Wrapper/storage_protect.pool.device[{#POOLNAME}])<>"DISK" and
+                {#ISMETADISK}="NO" and find(/Template IBM Storage Protect Wrapper/storage_protect.pool.name[{#POOLNAME}],,"like","OBJECT-COLD-DISK")=0
+              name: 'IBM SP: Pool {#POOLNAME}: Critical reuse delay ({ITEM.LASTVALUE})'
+              priority: AVERAGE
+              description: 'Storage pool reuse delay is too low (<1 day) for non-disk media'
+              manual_close: 'YES'
+              dependencies:
+                - name: 'IBM SP: Data collection Failed: {ITEM.LASTVALUE}'
+                  expression: 'count(/Template IBM Storage Protect Wrapper/storage_protect_collection.error,#3,"gt","")=3'
+          master_item:
+            key: 'storage_protect_pool_collector.sh[-i, {HOST.NAME}, -u, {$TSM_USER}, -p, {$TSM_PASS}]'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.data_stgpool
+      macros:
+        - macro: '{$POOL_UTIL_CRIT}'
+          value: '98'
+          description: 'Critical threshold % for pool utilization'
+        - macro: '{$POOL_UTIL_HIGH}'
+          value: '95'
+          description: 'High threshold % for pool utilization'
+        - macro: '{$TSM_DBBACKUP_CRIT}'
+          value: '5'
+          description: 'critical threshold for DB Backup Age (days)'
+        - macro: '{$TSM_DBBACKUP_HIGH}'
+          value: '3'
+          description: 'warning threshold for DB Backup Age (days)'
+        - macro: '{$TSM_DB_CRIT}'
+          value: '98'
+          description: 'Critical threshold for DB Space'
+        - macro: '{$TSM_DB_HIGH}'
+          value: '95'
+          description: 'Warning threshold for DB Space'
+        - macro: '{$TSM_EXPIRATION_CRIT}'
+          value: '128'
+          description: 'critical threshold no expiration check (in hours)'
+        - macro: '{$TSM_EXPIRATION_HIGH}'
+          value: '48'
+          description: 'high threshold no expiration check (in hours)'
+        - macro: '{$TSM_HOUSE_CRIT}'
+          value: '10'
+          description: 'Critical threshold for housekeeping jobs (amount)'
+        - macro: '{$TSM_HOUSE_HIGH}'
+          value: '2'
+          description: 'High threshold for housekeeping jobs (amount'
+        - macro: '{$TSM_LOG_CRIT}'
+          value: '90'
+          description: 'Critical threshold for log space used'
+        - macro: '{$TSM_LOG_HIGH}'
+          value: '80'
+          description: 'High threshold for log space used'
+        - macro: '{$TSM_PASS}'
+          type: SECRET_TEXT
+          description: 'dsmadmc password'
+        - macro: '{$TSM_REPLICATION_CRIT}'
+          value: '24'
+          description: 'Critical threshold for no replication process (hours)'
+        - macro: '{$TSM_SCHEDULES_CRIT}'
+          value: '8'
+          description: 'Critical threshold for admin schedules'
+        - macro: '{$TSM_SCHEDULES_HIGH}'
+          value: '1'
+          description: 'Warning threshold for admin schedules'
+        - macro: '{$TSM_USER}'
+          value: <TSM_MONITORING_USER>
+          description: 'dsmadmc username'
+        - macro: '{$TSM_VTAPE_CRIT}'
+          value: '90'
+          description: 'Critical threshold for VTAPE Capacity Usage'
+        - macro: '{$TSM_VTAPE_HIGH}'
+          value: '80'
+          description: 'High threshold for VTAPE Capacity Usage'
+      valuemaps:
+        - uuid: 0b311bb02bd34744bfc06f2b1fcd6d4d
+          name: 'Connection up/down'
+          mappings:
+            - value: '1'
+              newvalue: UP
+            - value: '0'
+              newvalue: DOWN
