@@ -38,7 +38,6 @@ IBM-Storage-Protect-Zabbix/
 ├── INSTALL.md                       # Detailed installation instructions
 ├── SECURITY.md                      # Security considerations and placeholders
 ├── CONTRIBUTING.md                  # Contribution guidelines
-├── LICENSE                          # MIT License
 ├── .gitignore                       # Git ignore rules
 └── README.md                        # This file (main documentation)
 ```
@@ -519,10 +518,6 @@ Common placeholders used:
 3. Make your changes
 4. Test thoroughly in a lab environment
 5. Submit a pull request with detailed description
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## Support
 
